@@ -48,7 +48,7 @@ function clientIp(request) {
   return 'Unavailable';
 }
 function lookupIp(ip) {
-  const unavailable = {country: 'Unavailable', region: 'Unavailable', city: 'Unavailable', timezone: 'Unavailable', isp: 'Unavailable', asn: 'Unavailable', connectionType: 'Unavailable', vpn: 'Unknown'};
+  const unavailable = {country: 'Unavailable', region: 'Unavailable', city: 'Unavailable', timezone: 'Unavailable', isp: 'Unavailable', asn: 'Unavailable', connectionType: 'Unavailable', vpn: 'Unknown', vpnActive: null};
   if (ip === 'Unavailable' || ip === '127.0.0.1') return Promise.resolve(unavailable);
   return new Promise(resolve => {
     const request = https.get(`https://ipwho.is/${encodeURIComponent(ip)}`, {timeout: 4500, headers: {'User-Agent': 'CATECOIN visitor analytics'}}, response => {
@@ -69,7 +69,8 @@ function lookupIp(ip) {
             isp: provider || 'Unavailable',
             asn: connection.asn ? `AS${connection.asn}` : 'Unavailable',
             connectionType: connection.type || (security.mobile ? 'Cellular' : 'Unavailable'),
-            vpn: security.vpn ? `VPN${provider ? ` - ${provider}` : ''}` : security.proxy ? 'Proxy' : security.tor ? 'Tor' : 'No VPN detected'
+            vpn: security.vpn ? `VPN ACTIVE${provider ? ` - ${provider}` : ''}` : security.proxy ? 'Proxy detected' : security.tor ? 'Tor detected' : 'No VPN detected',
+            vpnActive: security.vpn === true || security.proxy === true || security.tor === true
           });
         } catch (_) { resolve(unavailable); }
       });
@@ -140,7 +141,7 @@ const server = http.createServer(async (request, response) => {
         id: identity, ip,
         country: request.headers['cf-ipcountry'] || request.headers['x-country'] || network.country,
         region: network.region, city: network.city, geoTimezone: network.timezone,
-        isp: network.isp, asn: network.asn, connectionType: network.connectionType, vpn: network.vpn,
+        isp: network.isp, asn: network.asn, connectionType: network.connectionType, vpn: network.vpn, vpnActive: network.vpnActive,
         browser: browser(request.headers['user-agent'] || ''), device: device(request.headers['user-agent'] || ''),
         userAgent: clean(request.headers['user-agent'], 500), ...context,
         firstSeen: previous?.firstSeen || now, lastSeen: now,
@@ -163,12 +164,12 @@ const server = http.createServer(async (request, response) => {
       const visitors = readVisitors();
       let changed = false;
       for (const visitor of visitors) {
-        if (visitor.ip && visitor.ip !== 'Unavailable' && (!visitor.country || visitor.country === 'Unavailable')) {
+        if (visitor.ip && visitor.ip !== 'Unavailable' && (!visitor.country || visitor.country === 'Unavailable' || visitor.vpnActive === undefined)) {
           const network = await lookupIp(visitor.ip);
           Object.assign(visitor, {
             country: network.country, region: network.region, city: network.city,
             geoTimezone: network.timezone, isp: network.isp, asn: network.asn,
-            connectionType: network.connectionType, vpn: network.vpn
+            connectionType: network.connectionType, vpn: network.vpn, vpnActive: network.vpnActive
           });
           changed = true;
         }

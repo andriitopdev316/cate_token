@@ -110,6 +110,7 @@ function clientContext(input, request) {
     viewport: viewportWidth && viewportHeight ? `${viewportWidth} × ${viewportHeight}` : 'Unavailable',
     colorScheme: clean(input.colorScheme, 20),
     touch: input.touch === true ? 'Touch' : input.touch === false ? 'Pointer' : 'Unavailable',
+    clientNetwork: clean(input.clientNetwork, 60),
     referrer: clean(input.referrer, 300),
     page: clean(input.page, 180)
   };

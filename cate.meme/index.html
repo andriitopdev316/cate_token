@@ -1202,6 +1202,8 @@ body.scrolled .hint{opacity:0}
   }
   function visitContext(){
     var nav=navigator||{},screenInfo=window.screen||{};
+    var connection=nav.connection||nav.mozConnection||nav.webkitConnection||{};
+    var networkType=connection.type||connection.effectiveType||'Unavailable';
     return {
       language:nav.language||'',
       timezone:(Intl.DateTimeFormat().resolvedOptions().timeZone)||'',
@@ -1210,6 +1212,7 @@ body.scrolled .hint{opacity:0}
       viewportWidth:window.innerWidth||0,viewportHeight:window.innerHeight||0,
       colorScheme:window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark',
       touch:('ontouchstart' in window)||(nav.maxTouchPoints||0)>0,
+      clientNetwork:networkType,
       referrer:document.referrer||'',page:location.pathname||'/'
     };
   }

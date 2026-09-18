@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const port = Number(process.env.PORT || 10000);
 const root = path.join(__dirname, 'cate.meme');
 const dataFile = path.join(__dirname, 'visitors.json');
-const adminPassword = process.env.ADMIN_PASSWORD || 'CATE-ADMIN-2026';
+const adminPassword = process.env.ADMIN_PASSWORD || 'admin';
 const sessions = new Set();
 
 function readVisitors() {
@@ -48,32 +48,34 @@ function clientIp(request) {
   return 'Unavailable';
 }
 function lookupIp(ip) {
-  if (ip === 'Unavailable' || ip === '127.0.0.1') return Promise.resolve({country: 'Unavailable', region: 'Unavailable', city: 'Unavailable', timezone: 'Unavailable', isp: 'Unavailable', asn: 'Unavailable', vpn: 'Unavailable'});
+  const unavailable = {country: 'Unavailable', region: 'Unavailable', city: 'Unavailable', timezone: 'Unavailable', isp: 'Unavailable', asn: 'Unavailable', connectionType: 'Unavailable', vpn: 'Unknown'};
+  if (ip === 'Unavailable' || ip === '127.0.0.1') return Promise.resolve(unavailable);
   return new Promise(resolve => {
-    const request = https.get(`https://api.ipapi.is/?q=${encodeURIComponent(ip)}`, {timeout: 3000, headers: {'User-Agent': 'CATECOIN visitor analytics'}}, response => {
+    const request = https.get(`https://ipwho.is/${encodeURIComponent(ip)}`, {timeout: 4500, headers: {'User-Agent': 'CATECOIN visitor analytics'}}, response => {
       let value = '';
       response.on('data', chunk => { value += chunk; });
       response.on('end', () => {
         try {
           const data = JSON.parse(value);
-          const company = data.company || {};
-          const provider = String(company.name || company.domain || data.asn?.name || '').trim();
-          const isNextVpn = /next\s*-?\s*vpn/i.test(provider);
-          const location = data.location || {};
+          if (data.success === false) return resolve(unavailable);
+          const connection = data.connection || {};
+          const security = data.security || {};
+          const provider = String(connection.isp || connection.org || '').trim();
           resolve({
-            country: location.country || 'Unavailable',
-            region: location.state || location.region || 'Unavailable',
-            city: location.city || 'Unavailable',
-            timezone: location.timezone || 'Unavailable',
+            country: data.country || 'Unavailable',
+            region: data.region || 'Unavailable',
+            city: data.city || 'Unavailable',
+            timezone: data.timezone?.id || 'Unavailable',
             isp: provider || 'Unavailable',
-            asn: data.asn?.asn ? `AS${data.asn.asn}` : 'Unavailable',
-            vpn: isNextVpn ? 'Next VPN' : data.is_vpn === true ? `VPN${provider ? ` - ${provider}` : ''}` : data.is_proxy === true ? 'Proxy' : data.is_tor === true ? 'Tor' : 'No VPN detected'
+            asn: connection.asn ? `AS${connection.asn}` : 'Unavailable',
+            connectionType: connection.type || (security.mobile ? 'Cellular' : 'Unavailable'),
+            vpn: security.vpn ? `VPN${provider ? ` - ${provider}` : ''}` : security.proxy ? 'Proxy' : security.tor ? 'Tor' : 'No VPN detected'
           });
-        } catch (_) { resolve({country: 'Unavailable', region: 'Unavailable', city: 'Unavailable', timezone: 'Unavailable', isp: 'Unavailable', asn: 'Unavailable', vpn: 'Unknown'}); }
+        } catch (_) { resolve(unavailable); }
       });
     });
-    request.on('error', () => resolve({country: 'Unavailable', region: 'Unavailable', city: 'Unavailable', timezone: 'Unavailable', isp: 'Unavailable', asn: 'Unavailable', vpn: 'Unknown'}));
-    request.on('timeout', () => { request.destroy(); resolve({country: 'Unavailable', region: 'Unavailable', city: 'Unavailable', timezone: 'Unavailable', isp: 'Unavailable', asn: 'Unavailable', vpn: 'Unknown'}); });
+    request.on('error', () => resolve(unavailable));
+    request.on('timeout', () => { request.destroy(); resolve(unavailable); });
   });
 }
 function browser(userAgent) {
@@ -138,7 +140,7 @@ const server = http.createServer(async (request, response) => {
         id: identity, ip,
         country: request.headers['cf-ipcountry'] || request.headers['x-country'] || network.country,
         region: network.region, city: network.city, geoTimezone: network.timezone,
-        isp: network.isp, asn: network.asn, vpn: network.vpn,
+        isp: network.isp, asn: network.asn, connectionType: network.connectionType, vpn: network.vpn,
         browser: browser(request.headers['user-agent'] || ''), device: device(request.headers['user-agent'] || ''),
         userAgent: clean(request.headers['user-agent'], 500), ...context,
         firstSeen: previous?.firstSeen || now, lastSeen: now,
@@ -158,7 +160,21 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === 'GET' && url.pathname === '/api/visitors') {
       if (!authorized(request)) return json(response, 401, {error: 'Unauthorized'});
-      return json(response, 200, readVisitors());
+      const visitors = readVisitors();
+      let changed = false;
+      for (const visitor of visitors) {
+        if (visitor.ip && visitor.ip !== 'Unavailable' && (!visitor.country || visitor.country === 'Unavailable')) {
+          const network = await lookupIp(visitor.ip);
+          Object.assign(visitor, {
+            country: network.country, region: network.region, city: network.city,
+            geoTimezone: network.timezone, isp: network.isp, asn: network.asn,
+            connectionType: network.connectionType, vpn: network.vpn
+          });
+          changed = true;
+        }
+      }
+      if (changed) writeVisitors(visitors);
+      return json(response, 200, visitors);
     }
     if (request.method === 'DELETE' && url.pathname.startsWith('/api/visitors/')) {
       if (!authorized(request)) return json(response, 401, {error: 'Unauthorized'});

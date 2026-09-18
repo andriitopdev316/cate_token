@@ -48,7 +48,7 @@ function clientIp(request) {
   return 'Unavailable';
 }
 function lookupIp(ip) {
-  if (ip === 'Unavailable' || ip === '127.0.0.1') return Promise.resolve({country: 'Unavailable', vpn: 'Unavailable'});
+  if (ip === 'Unavailable' || ip === '127.0.0.1') return Promise.resolve({country: 'Unavailable', region: 'Unavailable', city: 'Unavailable', timezone: 'Unavailable', isp: 'Unavailable', asn: 'Unavailable', vpn: 'Unavailable'});
   return new Promise(resolve => {
     const request = https.get(`https://api.ipapi.is/?q=${encodeURIComponent(ip)}`, {timeout: 3000, headers: {'User-Agent': 'CATECOIN visitor analytics'}}, response => {
       let value = '';
@@ -59,12 +59,21 @@ function lookupIp(ip) {
           const company = data.company || {};
           const provider = String(company.name || company.domain || data.asn?.name || '').trim();
           const isNextVpn = /next\s*-?\s*vpn/i.test(provider);
-          resolve({country: data.location?.country || 'Unavailable', vpn: isNextVpn ? 'Next VPN' : data.is_vpn === true ? `VPN${provider ? ` - ${provider}` : ''}` : data.is_proxy === true ? 'Proxy' : 'No VPN detected'});
-        } catch (_) { resolve({country: 'Unavailable', vpn: 'Unknown'}); }
+          const location = data.location || {};
+          resolve({
+            country: location.country || 'Unavailable',
+            region: location.state || location.region || 'Unavailable',
+            city: location.city || 'Unavailable',
+            timezone: location.timezone || 'Unavailable',
+            isp: provider || 'Unavailable',
+            asn: data.asn?.asn ? `AS${data.asn.asn}` : 'Unavailable',
+            vpn: isNextVpn ? 'Next VPN' : data.is_vpn === true ? `VPN${provider ? ` - ${provider}` : ''}` : data.is_proxy === true ? 'Proxy' : data.is_tor === true ? 'Tor' : 'No VPN detected'
+          });
+        } catch (_) { resolve({country: 'Unavailable', region: 'Unavailable', city: 'Unavailable', timezone: 'Unavailable', isp: 'Unavailable', asn: 'Unavailable', vpn: 'Unknown'}); }
       });
     });
-    request.on('error', () => resolve({country: 'Unavailable', vpn: 'Unknown'}));
-    request.on('timeout', () => { request.destroy(); resolve({country: 'Unavailable', vpn: 'Unknown'}); });
+    request.on('error', () => resolve({country: 'Unavailable', region: 'Unavailable', city: 'Unavailable', timezone: 'Unavailable', isp: 'Unavailable', asn: 'Unavailable', vpn: 'Unknown'}));
+    request.on('timeout', () => { request.destroy(); resolve({country: 'Unavailable', region: 'Unavailable', city: 'Unavailable', timezone: 'Unavailable', isp: 'Unavailable', asn: 'Unavailable', vpn: 'Unknown'}); });
   });
 }
 function browser(userAgent) {
@@ -83,6 +92,28 @@ function device(userAgent) {
   if (/Linux/i.test(userAgent)) return 'PC - Linux';
   return 'Unknown';
 }
+function clean(value, limit = 160) {
+  return String(value == null ? '' : value).replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, limit) || 'Unavailable';
+}
+function number(value, max = 100000) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= max ? Math.round(parsed) : null;
+}
+function clientContext(input, request) {
+  const screenWidth = number(input.screenWidth), screenHeight = number(input.screenHeight);
+  const viewportWidth = number(input.viewportWidth), viewportHeight = number(input.viewportHeight);
+  return {
+    language: clean(input.language || request.headers['accept-language']?.split(',')[0], 40),
+    timezone: clean(input.timezone, 80),
+    platform: clean(input.platform, 80),
+    screen: screenWidth && screenHeight ? `${screenWidth} × ${screenHeight}` : 'Unavailable',
+    viewport: viewportWidth && viewportHeight ? `${viewportWidth} × ${viewportHeight}` : 'Unavailable',
+    colorScheme: clean(input.colorScheme, 20),
+    touch: input.touch === true ? 'Touch' : input.touch === false ? 'Pointer' : 'Unavailable',
+    referrer: clean(input.referrer, 300),
+    page: clean(input.page, 180)
+  };
+}
 function safePath(urlPath) {
   const requested = urlPath === '/' ? '/index.html' : urlPath;
   const file = path.resolve(root, `.${requested}`);
@@ -99,7 +130,19 @@ const server = http.createServer(async (request, response) => {
       const identity = String(input.id || crypto.randomUUID()).slice(0, 100);
       const ip = clientIp(request);
       const network = await lookupIp(ip);
-      const record = {id: identity, ip, country: request.headers['cf-ipcountry'] || request.headers['x-country'] || network.country, vpn: network.vpn, browser: browser(request.headers['user-agent'] || ''), device: device(request.headers['user-agent'] || ''), lastSeen: new Date().toISOString()};
+      const now = new Date().toISOString();
+      const previous = visitors.find(visitor => visitor.id === identity);
+      const context = clientContext(input, request);
+      const record = {
+        id: identity, ip,
+        country: request.headers['cf-ipcountry'] || request.headers['x-country'] || network.country,
+        region: network.region, city: network.city, geoTimezone: network.timezone,
+        isp: network.isp, asn: network.asn, vpn: network.vpn,
+        browser: browser(request.headers['user-agent'] || ''), device: device(request.headers['user-agent'] || ''),
+        userAgent: clean(request.headers['user-agent'], 500), ...context,
+        firstSeen: previous?.firstSeen || now, lastSeen: now,
+        visits: (previous?.visits || 0) + 1
+      };
       const index = visitors.findIndex(visitor => visitor.id === identity);
       if (index >= 0) visitors[index] = {...visitors[index], ...record}; else visitors.push(record);
       writeVisitors(visitors);

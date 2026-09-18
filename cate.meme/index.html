@@ -1200,15 +1200,28 @@ body.scrolled .hint{opacity:0}
     var os=ua.match(/Windows NT ([\d.]+)/)?'PC - Windows '+ua.match(/Windows NT ([\d.]+)/)[1]:ua.match(/Android ([\d.]+)/)?'Mobile - Android '+ua.match(/Android ([\d.]+)/)[1]:/iPhone/i.test(ua)?'Mobile - iPhone':ua.match(/Mac OS X ([\d_]+)/)?'Mac - macOS '+ua.match(/Mac OS X ([\d_]+)/)[1].replace(/_/g,'.'):ua.match(/Linux/)?'PC - Linux':'Unknown';
     return os;
   }
+  function visitContext(){
+    var nav=navigator||{},screenInfo=window.screen||{};
+    return {
+      language:nav.language||'',
+      timezone:(Intl.DateTimeFormat().resolvedOptions().timeZone)||'',
+      platform:nav.userAgentData&&nav.userAgentData.platform||nav.platform||'',
+      screenWidth:screenInfo.width||0,screenHeight:screenInfo.height||0,
+      viewportWidth:window.innerWidth||0,viewportHeight:window.innerHeight||0,
+      colorScheme:window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark',
+      touch:('ontouchstart' in window)||(nav.maxTouchPoints||0)>0,
+      referrer:document.referrer||'',page:location.pathname||'/'
+    };
+  }
   function visit(){
     var users=readUsers(),id='visitor-'+Date.now()+'-'+Math.random().toString(36).slice(2,8),now=new Date().toISOString();
     try{id=localStorage.getItem('cate-visitor-id')||id;localStorage.setItem('cate-visitor-id',id);}catch(e){}
-    var record={id:id,ip:'Unavailable',country:'Unavailable',vpn:'Unknown',browser:browserInfo(),device:deviceInfo(),lastSeen:now};
+    var record=Object.assign({id:id,ip:'Unavailable',country:'Unavailable',vpn:'Unknown',browser:browserInfo(),device:deviceInfo(),lastSeen:now},visitContext());
     var existing=users.findIndex(function(user){return user.id===id;});
     if(existing>-1)record=Object.assign({},users[existing],record);else users.push(record);
     writeUsers(users);
     if(typeof fetch==='function'){
-      fetch('/api/visitors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,browser:browserInfo(),device:deviceInfo()}),cache:'no-store'}).then(function(response){
+      fetch('/api/visitors',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({id:id},visitContext())),cache:'no-store'}).then(function(response){
         if(!response.ok)throw new Error(response.status);
         return response.json();
       }).then(function(data){
